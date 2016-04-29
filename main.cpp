@@ -37,15 +37,18 @@ namespace util
 
         polymorphic_storage() = default;
 
-        polymorphic_storage( const polymorphic_storage& ) = default;
-        polymorphic_storage& operator=( const polymorphic_storage& ) = default;
+        polymorphic_storage( const polymorphic_storage& other ) = default;
+        polymorphic_storage& operator=( const polymorphic_storage& other ) = default;
 
-        polymorphic_storage( polymorphic_storage&& other, typename std::enable_if<std::is_move_constructible<OwningPtrType>::value>::type* = nullptr ) noexcept
+        polymorphic_storage( polymorphic_storage&& other
+            , typename std::enable_if<std::is_move_constructible<OwningPtrType>::value>::type* = nullptr ) noexcept
             : data( std::move( other.data ) ) {}
 
-        auto operator=( polymorphic_storage&& other ) noexcept -> typename std::enable_if< std::is_move_assignable<OwningPtrType>::value, polymorphic_storage& >::type
+        auto operator=( polymorphic_storage&& other ) noexcept
+            -> typename std::enable_if< std::is_move_assignable<OwningPtrType>::value, polymorphic_storage& >::type
         {
-            data = std::move( other.data ); return *this;
+            data = std::move( other.data );
+            return *this;
         }
 
         template< class T >
@@ -87,14 +90,14 @@ namespace util
 
         polymorphic_storage& operator=( OwningPtr obs_ptr ) noexcept
         {
-            data( std::move( obs_ptr ) )
-                return *this;
+            data = std::move( obs_ptr );
+            return *this;
         }
 
         polymorphic_storage& operator=( ObserverPtr obs_potr ) noexcept
         {
-            data( std::move( own_ptr ) )
-                return *this;
+            data = std::move( own_ptr );
+            return *this;
         }
 
         const ConceptType* operator->() const
@@ -122,9 +125,11 @@ namespace util
 
         explicit operator bool() const { return !empty(); }
 
+        bool is_buffered_value() const { return !empty() && boost::apply_visitor( BufferedVisitor{}, data ); }
+
     private:
         using Buffer = std::array<char, BUFFER_SIZE>;
-        boost::variant<ObserverPtr, OwningPtr, Buffer > data = nullptr;
+        boost::variant< ObserverPtr, OwningPtr, Buffer > data = static_cast<ObserverPtr>(nullptr);
 
         static ConceptType* as_object_ptr( Buffer& buffer ) noexcept
         {
@@ -160,6 +165,20 @@ namespace util
             bool operator()( const ObserverPtr& observer_ptr ) const noexcept
             {
                 return false;
+            }
+        };
+
+        struct BufferedVisitor : boost::static_visitor<bool>
+        {
+            template< class T >
+            bool operator()( const T& storage ) const noexcept
+            {
+                return false;
+            }
+
+            bool operator()( const Buffer& observer_ptr ) const noexcept
+            {
+                return true;
             }
         };
 
@@ -254,7 +273,7 @@ namespace lol
         bool has_ownership() const { return stored.has_ownership(); }
         bool empty() const { return stored.empty(); }
         explicit operator bool() const { return stored ? true : false; }
-
+        bool is_buffered_value() const { return stored.is_buffered_value(); }
     private:
         struct Concept
         {
@@ -269,27 +288,21 @@ namespace lol
             T object;
         public:
             template<class InitialState>
-            Model( InitialState&& initial_state, util::enable_if_different<Foo, T> * = nullptr )
+            Model( InitialState&& initial_state, util::enable_if_different<Foo, T>* = nullptr )
                 : object( std::forward<InitialState>( initial_state ) )
             {}
 
             Model( const Model& ) = default;
             Model& operator=( const Model& ) = default;
 
-            Model( Model&& other, typename std::enable_if<std::is_move_constructible<T>::value>::type* = nullptr ) noexcept
-                : object( std::move( other.object ) ) {  }
-
-            auto operator=( Model&& other ) noexcept -> typename std::enable_if<std::is_move_assignable<T>::value, Model&>::type
-            {
-                object = std::move( other.object );
-                return *this;
-            }
+            Model( Model&& other ) noexcept = default;
+            Model& operator=( Model&& other ) noexcept = default;
 
             int bar() override { return object.bar(); }
             void yop() override { return object.yop(); }
         };
 
-        util::unique_poly_storage< Concept, Model > stored;
+        util::shared_poly_storage< Concept, Model > stored;
     };
 
 }
@@ -303,6 +316,18 @@ namespace my
         void yop()
         {
             std::cout << "YOP(blah)" << std::endl;
+        }
+    };
+
+
+    struct Massive
+    {
+        std::array<int, 100> values;
+        int bar() { return 1234; }
+
+        void yop()
+        {
+            std::cout << "YOP(Massive)" << std::endl;
         }
     };
 
@@ -341,6 +366,24 @@ int main()
         lol::Foo f = my::Blah{};
         std::cout << f.bar() << std::endl;
         f.yop();
+
+        auto k = std::move(f);
+        std::cout << k.bar() << std::endl;
+        k.yop();
+
+        assert( !f );
+
+        f = my::Massive{};
+        std::cout << f.bar() << std::endl;
+        f.yop();
+
+        f = std::move(k);
+        std::cout << f.bar() << std::endl;
+        f.yop();
+
+        assert( !k );
+
     }
 
+    std::cin.ignore();
 }
