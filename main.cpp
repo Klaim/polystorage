@@ -22,7 +22,8 @@ namespace util
         , std::false_type
     >::type;
 
-    template< class ConceptType, template< class... > class ModelType
+    template< class ConceptType
+        , template< class... > class ModelType
         , size_t BUFFER_SIZE
         , class OwningPtrType
         , class ObserverPtrType
@@ -48,7 +49,7 @@ namespace util
 
         template< class T >
         polymorphic_storage( T&& object
-            , typename std::enable_if<  !std::is_same<polymorphic_storage, typename std::decay<T>::type >::value
+            , typename std::enable_if<  !std::is_same< polymorphic_storage, typename std::decay<T>::type >::value
             && !std::is_same<OwningPtr, typename std::decay<T>::type >::value
             && !std::is_same<ObserverPtr, typename std::decay<T>::type >::value
             >::type* = nullptr )
@@ -115,31 +116,63 @@ namespace util
             return object();
         }
 
-        bool empty() const { return data.empty(); }
-        bool observer() const { return data.type<>; }
+        bool empty() const { return boost::apply_visitor( EmptynessVisitor{}, data ); }
+        bool has_ownership() const { return boost::apply_visitor( OwnershipVisitor{}, data ); }
 
-        explicit operator bool() const { return empty(); }
+        explicit operator bool() const { return !empty(); }
 
     private:
         using Buffer = std::array<char, BUFFER_SIZE>;
-        boost::variant<Buffer, OwningPtr, ObserverPtr> data;
+        boost::variant<ObserverPtr, OwningPtr, Buffer > data = nullptr;
 
-        static ConceptType* as_object_ptr( Buffer& buffer )
+        static ConceptType* as_object_ptr( Buffer& buffer ) noexcept
         {
             return reinterpret_cast<ConceptType*>( buffer.data() );
         }
 
+        struct EmptynessVisitor : boost::static_visitor<bool>
+        {
+            bool operator()( const Buffer& buffer ) const noexcept
+            {
+                return buffer.empty();
+            }
+
+            bool operator()( const OwningPtr& owning_ptr ) const noexcept
+            {
+                return owning_ptr ? false : true;
+            }
+
+            bool operator()( const ObserverPtr& observer_ptr ) const noexcept
+            {
+                return observer_ptr == nullptr;
+            }
+        };
+
+        struct OwnershipVisitor : boost::static_visitor<bool>
+        {
+            template< class T >
+            bool operator()( const T& storage ) const noexcept
+            {
+                return true;
+            }
+
+            bool operator()( const ObserverPtr& observer_ptr ) const noexcept
+            {
+                return false;
+            }
+        };
+
         struct ObjectVisitor : boost::static_visitor<ConceptType&>
         {
-            ConceptType& operator()( Buffer& buffer ) const
+            ConceptType& operator()( Buffer& buffer ) const noexcept
             {
                 return *as_object_ptr( buffer );
             }
-            ConceptType& operator()( OwningPtr& ptr ) const
+            ConceptType& operator()( OwningPtr& ptr ) const noexcept
             {
                 return *ptr;
             }
-            ConceptType& operator()( ObserverPtr& ptr ) const
+            ConceptType& operator()( ObserverPtr& ptr ) const noexcept
             {
                 return *ptr;
             }
@@ -147,16 +180,16 @@ namespace util
 
         struct DestroyVisitor : boost::static_visitor<void>
         {
-            void operator()( Buffer& buffer ) const
+            void operator()( Buffer& buffer ) const noexcept
             {
                 auto* object_ptr = as_object_ptr( buffer );
                 object_ptr->~ConceptType();
             }
-            void operator()( OwningPtr& ptr ) const
+            void operator()( OwningPtr& ptr ) const noexcept
             {
                 ptr = {};
             }
-            void operator()( ObserverPtr& ptr ) const
+            void operator()( ObserverPtr& ptr ) const noexcept
             {
                 ptr = {};
             }
@@ -175,7 +208,8 @@ namespace util
         void store( T&& object, std::true_type )
         {
             auto& buffer = boost::get<Buffer>( data );
-            new ( static_cast<void*>( buffer.data() ) ) ModelType<T>( std::forward<T>( object ) );
+            void* raw_buffer = static_cast<void*>( buffer.data() );
+            new( raw_buffer ) ModelType<T>( std::forward<T>( object ) );
         }
 
         void destroy()
@@ -192,6 +226,11 @@ namespace util
 
     //template< class ConceptType, template<...> class ModelType, size_t BUFFER_SIZE = sizeof(void*) >
     //using value_poly_storage = polymorphic_storage<const ConceptType, ModelType, BUFFER_SIZE, std::shared_ptr<const ConceptType>, const ConceptType* >;
+
+    template< class Left, class Right >
+    struct enable_if_different : std::enable_if_t< !std::is_same_v< std::decay_t<Left>, std::decay_t<Right> > >
+    {};
+
 }
 
 namespace lol
@@ -203,7 +242,7 @@ namespace lol
         Foo() = default;
 
         template< class T>
-        Foo( T&& other, typename std::enable_if< !std::is_same<Foo, typename std::decay<T>::type>::value >::type* = nullptr )
+        Foo( T&& other, util::enable_if_different<Foo, T>* = nullptr )
             : stored( Model<T>( std::forward<T>( other ) ) )
         {
         }
@@ -228,7 +267,9 @@ namespace lol
             T object;
         public:
             template<class InitialState>
-            Model( InitialState&& initial_state, typename std::enable_if< !std::is_same<Model, typename std::decay<T>::type>::value >::type* = nullptr ) : object( std::forward<InitialState>( initial_state ) ) {}
+            Model( InitialState&& initial_state, util::enable_if_different<Foo, T> * = nullptr )
+                : object( std::forward<InitialState>( initial_state ) )
+            {}
 
             Model( const Model& ) = default;
             Model& operator=( const Model& ) = default;
@@ -269,9 +310,13 @@ namespace my
 int main()
 {
     lol::Foo f;
+    assert( f.empty() );
     assert( !f );
+
     f = my::Blah{};
+    assert( !f.empty() );
     assert( f );
+
     std::cout << f.bar() << std::endl;
     f.yop();
 }
