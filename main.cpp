@@ -10,6 +10,7 @@ TODO:
  - instead of having ownership arguments, just manage all the possible pointer types
  - for unique_ptr, store it in a shared_ptr internally, with a way to prevent copies
  - allow storing std::ref
+ - in-place construction of objects
 
 */
 
@@ -250,6 +251,7 @@ namespace lol
         int bar() { return stored->bar(); }
         void yop() { return stored->yop(); }
 
+        bool has_ownership() const { return stored.has_ownership(); }
         bool empty() const { return stored.empty(); }
         explicit operator bool() const { return stored ? true : false; }
 
@@ -309,14 +311,36 @@ namespace my
 
 int main()
 {
-    lol::Foo f;
-    assert( f.empty() );
-    assert( !f );
+    {
+        lol::Foo f;
+        assert( f.empty() );
+        assert( !f );
+        assert( !f.has_ownership() );
 
-    f = my::Blah{};
-    assert( !f.empty() );
-    assert( f );
+        f = my::Blah{};
+        assert( !f.empty() );
+        assert( f );
+        assert( f.has_ownership() );
+    }
 
-    std::cout << f.bar() << std::endl;
-    f.yop();
+    {
+        lol::Foo f = my::Blah{};
+        assert( !f.empty() );
+        assert( f );
+        assert( f.has_ownership() );
+    }
+
+    {
+        lol::Foo f(my::Blah{});
+        assert( !f.empty() );
+        assert( f );
+        assert( f.has_ownership() );
+    }
+
+    {
+        lol::Foo f = my::Blah{};
+        std::cout << f.bar() << std::endl;
+        f.yop();
+    }
+
 }
