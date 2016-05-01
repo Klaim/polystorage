@@ -18,39 +18,11 @@ namespace util
 {
 
     template< size_t object_size, size_t buffer_size >
-    using fit_in_buffer = typename std::conditional< buffer_size >= object_size
+    using fit_in_buffer = std::conditional_t< buffer_size >= object_size
         , std::true_type
         , std::false_type
-    >::type;
+    >;
 
-    namespace detail
-    {
-        template< class T , class = std::conditional_t< std::is_copy_constructible<T>::value, std::true_type, std::false_type > >
-        struct as_copy_constructible_as {};
-
-        template< class T >
-        struct as_copy_constructible_as< T, std::false_type >
-        {
-            as_copy_constructible_as() = default;
-            as_copy_constructible_as( const as_copy_constructible_as& ) = delete;
-        };
-
-        template< class T, class = std::conditional_t< std::is_copy_assignable<T>::value, std::true_type, std::false_type > >
-        struct as_copy_assignable_as {};
-
-        template< class T >
-        struct as_copy_assignable_as< T, std::false_type >
-        {
-            as_copy_assignable_as() = default;
-            as_copy_assignable_as& operator=( const as_copy_assignable_as& ) = delete;
-        };
-
-        template< class T >
-        struct as_copyable_as
-            : as_copy_constructible_as<T>
-            , as_copy_assignable_as<T>
-        {};
-    }
 
     template< class ConceptType
         , template< class... > class ModelType
@@ -59,7 +31,6 @@ namespace util
         , class ObserverPtrType
     >
     class polymorphic_storage
-        //: detail:: as_copyable_as< OwningPtrType >
     {
     public:
         using ObserverPtr = ObserverPtrType;
@@ -80,24 +51,30 @@ namespace util
             data = other.data;
             static_assert( std::is_copy_assignable_v<OwningPtr>
                 , "This type is not copy-assignable because it can contain an owning pointer which is not copy assignable." );
+            return *this;
         }
 
-        polymorphic_storage( polymorphic_storage&& other
-            , typename std::enable_if<std::is_move_constructible<OwningPtrType>::value>::type* = nullptr ) noexcept
-            : data( std::move( other.data ) ) {}
-
-        auto operator=( polymorphic_storage&& other ) noexcept
-            -> typename std::enable_if< std::is_move_assignable<OwningPtrType>::value, polymorphic_storage& >::type
+        polymorphic_storage( polymorphic_storage&& other ) noexcept
+            : data( std::move( other.data ) )
         {
+            static_assert( std::is_move_constructible_v<OwningPtr>
+                , "This type is not move-constructible because it can contain an owning pointer which is not move-constructible." );
+        }
+
+        polymorphic_storage& operator=( polymorphic_storage&& other ) noexcept
+        {
+            static_assert( std::is_move_assignable_v<OwningPtr>
+                , "This type is not move-assignable because it can contain an owning pointer which is not move-assignable." );
+
             data = std::move( other.data );
             return *this;
         }
 
         template< class Arg
-            , class = std::enable_if<  !std::is_same< this_type, typename std::decay<Arg>::type >::value
-                                    && !std::is_same< OwningPtr, typename std::decay<Arg>::type >::value
-                                    && !std::is_same< ObserverPtr, typename std::decay<Arg>::type >::value
-                                    >::type
+            , class = std::enable_if_t< !std::is_same_v< this_type  , std::decay_t<Arg> >
+                                     && !std::is_same_v< OwningPtr  , std::decay_t<Arg> >
+                                     && !std::is_same_v< ObserverPtr, std::decay_t<Arg> >
+                                     >
         >
         polymorphic_storage( Arg&& object )
         {
@@ -121,11 +98,11 @@ namespace util
 
         template< class T >
         auto operator=( T&& other )
-            -> typename std::enable_if<  !std::is_same<polymorphic_storage, typename std::decay<T>::type >::value
-            && !std::is_same<OwningPtr, typename std::decay<T>::type >::value
-            && !std::is_same<ObserverPtr, typename std::decay<T>::type >::value
-            , polymorphic_storage&
-            >::type
+            -> std::enable_if_t< !std::is_same_v< polymorphic_storage   , std::decay_t<T> >
+                              && !std::is_same_v< OwningPtr             , std::decay_t<T> >
+                              && !std::is_same_v< ObserverPtr           , std::decay_t<T> >
+                               , polymorphic_storage&
+                               >
         {
             store( std::forward<T>( other ), fit_in_buffer<sizeof( T ), BUFFER_SIZE>{} );
             return *this;
@@ -407,7 +384,7 @@ int main()
         f.yop();
 
         //lol::Foo u = f; // SHOULD NEVER COMPILE IF Foo have unique storage
-        //lol::Foo u; u = f; // SHOULD NEVER COMPILE IF Foo have unique storage
+        //lol::Foo v; v = f; // SHOULD NEVER COMPILE IF Foo have unique storage
 
         auto k = std::move(f);
         std::cout << k.bar() << std::endl;
