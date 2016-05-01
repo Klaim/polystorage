@@ -23,6 +23,35 @@ namespace util
         , std::false_type
     >::type;
 
+    namespace detail
+    {
+        template< class T , class = std::conditional_t< std::is_copy_constructible<T>::value, std::true_type, std::false_type > >
+        struct as_copy_constructible_as {};
+
+        template< class T >
+        struct as_copy_constructible_as< T, std::false_type >
+        {
+            as_copy_constructible_as() = default;
+            as_copy_constructible_as( const as_copy_constructible_as& ) = delete;
+        };
+
+        template< class T, class = std::conditional_t< std::is_copy_assignable<T>::value, std::true_type, std::false_type > >
+        struct as_copy_assignable_as {};
+
+        template< class T >
+        struct as_copy_assignable_as< T, std::false_type >
+        {
+            as_copy_assignable_as() = default;
+            as_copy_assignable_as& operator=( const as_copy_assignable_as& ) = delete;
+        };
+
+        template< class T >
+        struct as_copyable_as
+            : as_copy_constructible_as<T>
+            , as_copy_assignable_as<T>
+        {};
+    }
+
     template< class ConceptType
         , template< class... > class ModelType
         , size_t BUFFER_SIZE
@@ -30,15 +59,28 @@ namespace util
         , class ObserverPtrType
     >
     class polymorphic_storage
+        //: detail:: as_copyable_as< OwningPtrType >
     {
     public:
         using ObserverPtr = ObserverPtrType;
         using OwningPtr = OwningPtrType;
+        using this_type = polymorphic_storage< ConceptType, ModelType, BUFFER_SIZE, OwningPtrType, ObserverPtrType >;
 
         polymorphic_storage() = default;
 
-        polymorphic_storage( const polymorphic_storage& other ) = default;
-        polymorphic_storage& operator=( const polymorphic_storage& other ) = default;
+        polymorphic_storage( const polymorphic_storage& other )
+            : data( other.data )
+        {
+            static_assert( std::is_copy_constructible_v<OwningPtr>
+                , "This type is not copy-constructible because it can contain an owning pointer which is not copy constructible." );
+        }
+
+        polymorphic_storage& operator=( const polymorphic_storage& other )
+        {
+            data = other.data;
+            static_assert( std::is_copy_assignable_v<OwningPtr>
+                , "This type is not copy-assignable because it can contain an owning pointer which is not copy assignable." );
+        }
 
         polymorphic_storage( polymorphic_storage&& other
             , typename std::enable_if<std::is_move_constructible<OwningPtrType>::value>::type* = nullptr ) noexcept
@@ -51,14 +93,15 @@ namespace util
             return *this;
         }
 
-        template< class T >
-        polymorphic_storage( T&& object
-            , typename std::enable_if<  !std::is_same< polymorphic_storage, typename std::decay<T>::type >::value
-            && !std::is_same<OwningPtr, typename std::decay<T>::type >::value
-            && !std::is_same<ObserverPtr, typename std::decay<T>::type >::value
-            >::type* = nullptr )
+        template< class Arg
+            , class = std::enable_if<  !std::is_same< this_type, typename std::decay<Arg>::type >::value
+                                    && !std::is_same< OwningPtr, typename std::decay<Arg>::type >::value
+                                    && !std::is_same< ObserverPtr, typename std::decay<Arg>::type >::value
+                                    >::type
+        >
+        polymorphic_storage( Arg&& object )
         {
-            store( std::forward<T>( object ), fit_in_buffer<sizeof( T ), BUFFER_SIZE>{} );
+            store( std::forward<Arg>( object ), fit_in_buffer<sizeof( Arg ), BUFFER_SIZE>{} );
         }
 
         polymorphic_storage( OwningPtr own_ptr )
@@ -248,8 +291,7 @@ namespace util
     //using value_poly_storage = polymorphic_storage<const ConceptType, ModelType, BUFFER_SIZE, std::shared_ptr<const ConceptType>, const ConceptType* >;
 
     template< class Left, class Right >
-    struct enable_if_different : std::enable_if_t< !std::is_same_v< std::decay_t<Left>, std::decay_t<Right> > >
-    {};
+    using enable_if_different = std::enable_if_t< !std::is_same< std::decay_t<Left>, std::decay_t<Right> >::value >;
 
 }
 
@@ -261,8 +303,8 @@ namespace lol
     public:
         Foo() = default;
 
-        template< class T>
-        Foo( T&& other, util::enable_if_different<Foo, T>* = nullptr )
+        template< class T, class = util::enable_if_different<Foo, T> >
+        Foo( T&& other )
             : stored( Model<T>( std::forward<T>( other ) ) )
         {
         }
@@ -302,7 +344,7 @@ namespace lol
             void yop() override { return object.yop(); }
         };
 
-        util::shared_poly_storage< Concept, Model > stored;
+        util::unique_poly_storage< Concept, Model > stored;
     };
 
 }
@@ -333,6 +375,9 @@ namespace my
 
 
 }
+
+template< class T >
+struct ShowMe;
 
 int main()
 {
@@ -367,6 +412,8 @@ int main()
         std::cout << f.bar() << std::endl;
         f.yop();
 
+        //lol::Foo u = f; // SHOULD NEVER COMPILE IF Foo have unique storage
+
         auto k = std::move(f);
         std::cout << k.bar() << std::endl;
         k.yop();
@@ -383,7 +430,16 @@ int main()
 
         assert( !k );
 
+
     }
+
+    /*typename util::enable_if_different< lol::Foo, int >* k = nullptr;
+    ShowMe<decltype( k )> mofo;
+*/
+
+    //lol::Foo foo;
+    //lol::Foo bar = std::move(foo);
+    //bar = foo;
 
     std::cin.ignore();
 }
