@@ -329,16 +329,10 @@ namespace lol
         {
             T object;
         public:
-            template<class InitialState>
-            Model( InitialState&& initial_state, util::enable_if_different<Foo, T>* = nullptr )
+            template< class InitialState, class = util::enable_if_different<Foo, T> >
+            Model( InitialState&& initial_state )
                 : object( std::forward<InitialState>( initial_state ) )
             {}
-
-            Model( const Model& ) = default;
-            Model& operator=( const Model& ) = default;
-
-            Model( Model&& other ) noexcept = default;
-            Model& operator=( Model&& other ) noexcept = default;
 
             int bar() override { return object.bar(); }
             void yop() override { return object.yop(); }
@@ -413,6 +407,7 @@ int main()
         f.yop();
 
         //lol::Foo u = f; // SHOULD NEVER COMPILE IF Foo have unique storage
+        //lol::Foo u; u = f; // SHOULD NEVER COMPILE IF Foo have unique storage
 
         auto k = std::move(f);
         std::cout << k.bar() << std::endl;
@@ -436,10 +431,6 @@ int main()
     /*typename util::enable_if_different< lol::Foo, int >* k = nullptr;
     ShowMe<decltype( k )> mofo;
 */
-
-    //lol::Foo foo;
-    //lol::Foo bar = std::move(foo);
-    //bar = foo;
 
     std::cin.ignore();
 }
