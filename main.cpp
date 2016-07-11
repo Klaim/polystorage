@@ -48,6 +48,7 @@ namespace util
 
         polymorphic_storage& operator=( const polymorphic_storage& other )
         {
+            destroy();
             data = other.data;
             static_assert( std::is_copy_assignable_v<OwningPtr>
                 , "This type is not copy-assignable because it can contain an owning pointer which is not copy assignable." );
@@ -65,7 +66,7 @@ namespace util
         {
             static_assert( std::is_move_assignable_v<OwningPtr>
                 , "This type is not move-assignable because it can contain an owning pointer which is not move-assignable." );
-
+            destroy();
             data = std::move( other.data );
             return *this;
         }
